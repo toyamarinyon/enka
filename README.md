@@ -23,7 +23,6 @@ What `install.sh` does:
 
 - runs `swift build -c release`
 - installs `bin/enka` and `Enka.app` under `$ENKA_INSTALL_ROOT` (default: `~/Applications/enka`)
-- does not create/update config
 - does not create/update a LaunchAgent plist
 - does not execute `launchctl`
 
@@ -53,7 +52,6 @@ Flags:
 Development path overrides:
 
 - `ENKA_INSTALL_ROOT`: install root used by status/setup/plist generation
-- `ENKA_CONFIG_DIR`: config directory (default: `~/.config/enka`)
 - `ENKA_LAUNCH_AGENT_DIR`: LaunchAgent directory (default: `~/Library/LaunchAgents`)
 
 ## CLI
@@ -77,7 +75,6 @@ Daemon and lifecycle commands:
 ```bash
 .build/debug/enka
 .build/debug/enka run
-.build/debug/enka run --config /path/to/config.json
 .build/debug/enka setup --dry-run --yes
 .build/debug/enka status --dry-run
 .build/debug/enka doctor
@@ -88,25 +85,9 @@ Daemon and lifecycle commands:
 
 Default paths:
 
-- config: `~/.config/enka/config.json`
 - LaunchAgent: `~/Library/LaunchAgents/dev.ultrahope.enka.plist`
 - install root: `~/Applications/enka`
 - state/logs: `~/.local/state/enka`
-
-Example config:
-
-```json
-{
-  "leftTap": {
-    "source": "com.apple.keylayout.ABC"
-  },
-  "rightTap": {
-    "source": "com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese"
-  }
-}
-```
-
-This config is kept for CLI reference and legacy compatibility. The daemon no longer needs it for tap switching.
 
 Behavior:
 
@@ -141,7 +122,6 @@ Manual cleanup:
 
 ```bash
 rm -rf "$HOME/Applications/enka"
-rm -rf "$HOME/.config/enka"
 rm -rf "$HOME/.local/state/enka"
 ```
 

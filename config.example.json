@@ -1,8 +1,0 @@
-{
-  "leftTap": {
-    "source": "com.apple.keylayout.ABC"
-  },
-  "rightTap": {
-    "source": "com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese"
-  }
-}

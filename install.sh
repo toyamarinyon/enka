@@ -51,8 +51,7 @@ Installed:
 - $app_dir
 - $app_executable
 
-service/config: not changed by installer
-  - No config file was generated.
+service files: not changed by installer
   - No LaunchAgent plist was generated.
 
 Next steps:

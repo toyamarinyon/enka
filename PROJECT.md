@@ -17,18 +17,7 @@ The product is intentionally not a general command launcher. The daemon keeps th
 - Rename the tool from `lrcmd` to `enka`.
 - Ship one CLI binary, `enka`, plus `Enka.app` for Accessibility identity.
 - Remove the separate `inctl` helper binary by folding input source operations into `enka sources/current/select`.
-- Keep the existing config surface for `sources/current/select` and legacy references, while the daemon behavior uses direct key posting:
-
-```json
-{
-  "leftTap": {
-    "source": "com.apple.keylayout.ABC"
-  },
-  "rightTap": {
-    "source": "com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese"
-  }
-}
-```
+- Do not expose tap source configuration; the daemon posts fixed JIS Eisuu/Kana keycodes directly.
 
 ## Owned Artifacts
 
@@ -36,7 +25,6 @@ The product is intentionally not a general command launcher. The daemon keeps th
 - CLI: `~/Applications/enka/bin/enka`
 - App bundle: `~/Applications/enka/Enka.app`
 - LaunchAgent: `~/Library/LaunchAgents/dev.ultrahope.enka.plist`
-- Config: `~/.config/enka/config.json` (legacy / CLI reference only; daemon no longer requires it)
 - State/log directory: `~/.local/state/enka`
 - Release archive: `enka-v<version>-<platform>.tar.gz`
 
@@ -44,6 +32,6 @@ The product is intentionally not a general command launcher. The daemon keeps th
 
 - Finish the `enka` breaking rename across Swift code, scripts, docs, and release verification.
 - Verify `enka sources/current/select` on a real macOS session.
-- Verify setup dry-run does not create config or LaunchAgent directories.
+- Verify setup dry-run does not create LaunchAgent directories.
 - Verify release packaging contains only `bin/enka`, `Enka.app`, README, and optional LICENSE.
 - Document Background Activity behavior if reboot/startup issues reappear.

@@ -4,20 +4,10 @@ import CoreGraphics
 import Foundation
 import Darwin
 
-struct Config: Decodable {
-    struct InputTap: Decodable {
-        let source: String
-    }
-
-    let leftTap: InputTap
-    let rightTap: InputTap
-}
-
 enum EnkaError: Error, CustomStringConvertible {
     case invalidArguments
     case accessibilityPermissionRequired
-    case configReadFailed(String, Error)
-    case configDecodeFailed(String, Error)
+    case inputSourceReadFailed(String)
     case eventTapCreationFailed
     case runLoopSourceCreationFailed
 
@@ -27,10 +17,8 @@ enum EnkaError: Error, CustomStringConvertible {
             return "invalid arguments"
         case .accessibilityPermissionRequired:
             return "Accessibility permission is required. Enable it in System Settings > Privacy & Security > Accessibility."
-        case let .configReadFailed(path, error):
-            return "Failed to read config at '\(path)': \(error.localizedDescription)"
-        case let .configDecodeFailed(path, error):
-            return "Invalid config at '\(path)': \(error.localizedDescription)"
+        case let .inputSourceReadFailed(reason):
+            return "Failed to read input source: \(reason)"
         case .eventTapCreationFailed:
             return "Failed to create keyboard event tap. Check Accessibility permission."
         case .runLoopSourceCreationFailed:
@@ -57,7 +45,6 @@ final class LauncherState {
 
     private var leftState = KeyState()
     private var rightState = KeyState()
-    var config: Config?
 
     func handle(event: CGEvent, type: CGEventType) -> Unmanaged<CGEvent>? {
         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
@@ -167,13 +154,13 @@ final class LauncherState {
 func usage(progname: String) -> String {
     """
     Usage:
-      \(progname) [run] [--config /path/to/config.json]
+      \(progname) [run]
       \(progname) sources
       \(progname) current
       \(progname) select <id>
       \(progname) status [--dry-run]
       \(progname) doctor
-      \(progname) setup [--yes] [--replace] [--dry-run] [--no-open] [--no-start] [--wait-accessibility <seconds>]
+      \(progname) setup [--yes] [--dry-run] [--no-open] [--no-start] [--wait-accessibility <seconds>]
       \(progname) uninstall [--yes] [--dry-run]
       \(progname) restart [--dry-run]
       \(progname) stop [--dry-run]
@@ -185,7 +172,7 @@ func writeStderr(_ message: String) {
 }
 
 enum EnkaCommand {
-    case run(configPath: String)
+    case run
     case sources
     case currentSource
     case select(String)
@@ -194,7 +181,6 @@ enum EnkaCommand {
     case accessibilityStatus(resultFile: String?)
     case setup(
         autoApprove: Bool,
-        replaceExistingConfig: Bool,
         dryRun: Bool,
         noOpen: Bool,
         noStart: Bool,
@@ -218,10 +204,6 @@ func userHomeDirectory() -> String {
 
 func defaultInstallRoot() -> String {
     envOverride("ENKA_INSTALL_ROOT") ?? userHomeDirectory().appending("/Applications/enka")
-}
-
-func defaultConfigDirectory() -> String {
-    envOverride("ENKA_CONFIG_DIR") ?? userHomeDirectory().appending("/.config/enka")
 }
 
 func defaultLaunchAgentDirectory() -> String {
@@ -263,10 +245,6 @@ func writeSetupLog(_ path: String, _ message: String) {
     } catch {
         // Best-effort setup logging.
     }
-}
-
-func defaultConfigPath() -> String {
-    defaultConfigDirectory().appending("/config.json")
 }
 
 func installedAppPath() -> String {
@@ -340,15 +318,6 @@ func launchAgentPlist() -> String {
     """
 }
 
-func escapeJSON(_ value: String) -> String {
-    value
-        .replacingOccurrences(of: "\\", with: "\\\\")
-        .replacingOccurrences(of: "\"", with: "\\\"")
-        .replacingOccurrences(of: "\n", with: "\\n")
-        .replacingOccurrences(of: "\r", with: "\\r")
-        .replacingOccurrences(of: "\t", with: "\\t")
-}
-
 struct InputSource {
     let source: TISInputSource
     let id: String
@@ -388,13 +357,13 @@ func availableInputSources() throws -> [InputSource] {
 
 func currentInputSource() throws -> InputSource {
     guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue() else {
-        throw EnkaError.configDecodeFailed("<current>", NSError(domain: "Enka", code: 1))
+        throw EnkaError.inputSourceReadFailed("current keyboard input source is unavailable")
     }
     guard
         let id = inputSourceProperty(source, key: kTISPropertyInputSourceID),
         let name = inputSourceProperty(source, key: kTISPropertyLocalizedName)
     else {
-        throw EnkaError.configDecodeFailed("<current>", NSError(domain: "Enka", code: 2))
+        throw EnkaError.inputSourceReadFailed("current keyboard input source is missing id or name")
     }
     return InputSource(source: source, id: id, name: name)
 }
@@ -409,69 +378,6 @@ func selectInputSource(_ id: String) -> Bool {
     } catch {
         return false
     }
-}
-
-func inputSourceName(for id: String, in sources: [InputSource]) -> String {
-    for source in sources where source.id == id {
-        return source.name
-    }
-    return "(not listed)"
-}
-
-func selectedInputSourceId(preferred: String, fallback: String, available: [InputSource]?) -> String {
-    guard let available else {
-        return preferred
-    }
-    if available.contains(where: { $0.id == preferred }) {
-        return preferred
-    }
-    if available.contains(where: { $0.id == fallback }) {
-        return fallback
-    }
-    return preferred
-}
-
-func defaultInputSourceIndex(
-    available sources: [InputSource],
-    preferred: String,
-    fallback: String
-) -> Int {
-    if let idx = sources.firstIndex(where: { $0.id == preferred }) {
-        return idx + 1
-    }
-    if let idx = sources.firstIndex(where: { $0.id == fallback }) {
-        return idx + 1
-    }
-    return 1
-}
-
-func readChoice(prompt: String, defaultValue: Int, maxValue: Int) -> Int {
-    while true {
-        print(prompt, terminator: " ")
-        guard let line = readLine() else {
-            return defaultValue
-        }
-
-        let response = line.trimmingCharacters(in: .whitespacesAndNewlines)
-        if response.isEmpty {
-            return defaultValue
-        }
-
-        guard let choice = Int(response), choice >= 1, choice <= maxValue else {
-            print("warning: invalid choice: \(response). Enter a number between 1 and \(maxValue).")
-            continue
-        }
-        return choice
-    }
-}
-
-func chooseInputSource(
-    prompt: String,
-    sources: [InputSource],
-    defaultIndex: Int
-) -> InputSource {
-    let choice = readChoice(prompt: prompt, defaultValue: defaultIndex, maxValue: sources.count)
-    return sources[choice - 1]
 }
 
 func confirm(_ prompt: String, defaultYes: Bool = false) -> Bool {
@@ -498,19 +404,6 @@ func ensureDirectory(atPath path: String) throws {
     if !fm.fileExists(atPath: path) {
         try fm.createDirectory(atPath: path, withIntermediateDirectories: true)
     }
-}
-
-func configurationJSON(leftSourceId: String, rightSourceId: String) -> String {
-    return """
-    {
-      "leftTap": {
-        "source": "\(escapeJSON(leftSourceId))"
-      },
-      "rightTap": {
-        "source": "\(escapeJSON(rightSourceId))"
-      }
-    }
-    """
 }
 
 func printSetupSummary(plistPath: String) {
@@ -701,13 +594,11 @@ func waitForAccessibilityPermission(timeoutSeconds: Int) -> Bool {
 
 func runSetup(
     autoApprove: Bool,
-    replaceExistingConfig: Bool,
     dryRun: Bool,
     noOpen: Bool,
     noStart: Bool,
     waitAccessibilitySeconds: Int
 ) {
-    let configPath = defaultConfigPath()
     let plistPath = launchAgentPlistPath()
     let plistDir = (plistPath as NSString).deletingLastPathComponent
     let stateDir = stateDirectoryPath()
@@ -727,14 +618,11 @@ func runSetup(
             print("Setup log: (unable to create state directory)")
         }
         logToSetup(
-            "\(setupLogPrefix()) [setup] start configPath=\(configPath) plistPath=\(plistPath) appPath=\(installedAppPath()) appExecutablePath=\(installedAppExecutablePath()) dryRun=\(dryRun) noOpen=\(noOpen) noStart=\(noStart) waitAccessibilitySeconds=\(waitAccessibilitySeconds)"
+            "\(setupLogPrefix()) [setup] start plistPath=\(plistPath) appPath=\(installedAppPath()) appExecutablePath=\(installedAppExecutablePath()) dryRun=\(dryRun) noOpen=\(noOpen) noStart=\(noStart) waitAccessibilitySeconds=\(waitAccessibilitySeconds)"
         )
     }
 
     printSetupSummary(plistPath: plistPath)
-    if replaceExistingConfig {
-        print("Note: --replace is accepted for compatibility; setup no longer writes config.")
-    }
 
     let fm = FileManager.default
     let previousPlistExists = fm.fileExists(atPath: plistPath)
@@ -742,7 +630,6 @@ func runSetup(
 
     if dryRun {
         print("Running setup in dry-run mode. No files will be written.")
-        print("No config.json will be created or modified.")
     }
 
     if dryRun {
@@ -763,7 +650,6 @@ func runSetup(
         logToSetup("\(setupLogPrefix()) [setup] wrote plist: \(plistPath)")
     }
 
-    print("Config: kept (daemon no longer requires a config file)")
     print("Plist:  \(plistResult): \(plistPath)")
 
     if dryRun {
@@ -899,35 +785,18 @@ func runSetup(
     runRestartCommands(plistPath: plistPath, dryRun: dryRun)
 }
 
-func doWriteConfig(
-    at path: String,
-    leftSourceId: String,
-    rightSourceId: String
-) throws {
-    let json = configurationJSON(leftSourceId: leftSourceId, rightSourceId: rightSourceId)
-    try json.write(toFile: path, atomically: true, encoding: .utf8)
-}
-
 func parseArguments(_ arguments: [String]) throws -> EnkaCommand {
     let args = Array(arguments.dropFirst())
 
     if args.isEmpty {
-        return .run(configPath: defaultConfigPath())
-    }
-
-    if args.first == "--config" {
-        guard args.count == 2 else { throw EnkaError.invalidArguments }
-        return .run(configPath: args[1])
+        return .run
     }
 
     guard let command = args.first else { throw EnkaError.invalidArguments }
 
     if command == "run" {
         if args.count == 1 {
-            return .run(configPath: defaultConfigPath())
-        }
-        if args.count == 3 && args[1] == "--config" {
-            return .run(configPath: args[2])
+            return .run
         }
         throw EnkaError.invalidArguments
     }
@@ -949,7 +818,6 @@ func parseArguments(_ arguments: [String]) throws -> EnkaCommand {
     switch command {
     case "setup":
         var autoApprove = false
-        var replaceExistingConfig = false
         var dryRun = false
         var noOpen = false
         var noStart = false
@@ -965,11 +833,6 @@ func parseArguments(_ arguments: [String]) throws -> EnkaCommand {
                     throw EnkaError.invalidArguments
                 }
                 autoApprove = true
-            case "--replace":
-                if replaceExistingConfig {
-                    throw EnkaError.invalidArguments
-                }
-                replaceExistingConfig = true
             case "--dry-run":
                 if dryRun {
                     throw EnkaError.invalidArguments
@@ -1006,7 +869,6 @@ func parseArguments(_ arguments: [String]) throws -> EnkaCommand {
 
         return .setup(
             autoApprove: autoApprove,
-            replaceExistingConfig: replaceExistingConfig,
             dryRun: dryRun,
             noOpen: noOpen,
             noStart: noStart,
@@ -1077,18 +939,7 @@ func parseArguments(_ arguments: [String]) throws -> EnkaCommand {
     }
 }
 
-func checkConfigJSON(at path: String) -> String {
-    do {
-        _ = try loadConfig(path: path)
-        return "ok"
-    } catch let error as EnkaError {
-        return "invalid: \(error.description)"
-    } catch {
-        return "invalid: \(error.localizedDescription)"
-    }
-}
-
-func printStatus(configPath: String, dryRun: Bool) {
+func printStatus(dryRun: Bool) {
     let fm = FileManager.default
     let target = launchctlServiceTarget()
     let accessible = checkAccessibilityPermission()
@@ -1098,7 +949,6 @@ func printStatus(configPath: String, dryRun: Bool) {
     let errorLogPath = standardErrorLogPath()
     let stateDir = stateDirectoryPath()
 
-    print("Config:       \(configPath) (\(fm.fileExists(atPath: configPath) ? "exists" : "missing"))")
     print("LaunchAgent:  \(launchAgentPlistPath()) (\(fm.fileExists(atPath: launchAgentPlistPath()) ? "exists" : "missing"))")
     print("App:          \(appPath) (\(fm.fileExists(atPath: appPath) ? "exists" : "missing"))")
     print("App binary:   \(appExecutablePath) (\(fm.fileExists(atPath: appExecutablePath) ? "exists" : "missing"))")
@@ -1150,7 +1000,7 @@ func printStatus(configPath: String, dryRun: Bool) {
     }
 }
 
-func printDoctor(configPath: String) {
+func printDoctor() {
     let fm = FileManager.default
     let plistPath = launchAgentPlistPath()
     let appPath = installedAppPath()
@@ -1160,31 +1010,9 @@ func printDoctor(configPath: String) {
     let stdoutLogPath = standardOutputLogPath()
     let stderrLogPath = standardErrorLogPath()
     let setupLog = setupLogPath()
-    var config: Config?
 
     print("status")
-    printStatus(configPath: configPath, dryRun: true)
-
-    if !fm.fileExists(atPath: configPath) {
-        print("config decode: missing (ok; daemon no longer requires config)")
-    } else {
-        let result = checkConfigJSON(at: configPath)
-        print("config decode: \(result)")
-        if result == "ok" {
-            do {
-                config = try loadConfig(path: configPath)
-            } catch {
-                // Should not happen because checkConfigJSON already decoded it.
-            }
-        } else {
-            print("next action: fix JSON syntax at \(configPath)")
-        }
-    }
-
-    if let config {
-        print("left source: \(config.leftTap.source)")
-        print("right source: \(config.rightTap.source)")
-    }
+    printStatus(dryRun: true)
 
     if fm.fileExists(atPath: plistPath) {
         do {
@@ -1346,7 +1174,6 @@ func runUninstall(autoApprove: Bool, dryRun: Bool) {
     let fm = FileManager.default
     let uid = getuid()
     let plistPath = launchAgentPlistPath()
-    let configPath = defaultConfigPath()
     let installRoot = defaultInstallRoot()
     let hasPlist = fm.fileExists(atPath: plistPath)
 
@@ -1358,21 +1185,18 @@ func runUninstall(autoApprove: Bool, dryRun: Bool) {
     }
     print("Targets:")
     print("  LaunchAgent plist: \(plistPath)")
-    print("  Config file:      \(configPath)")
     print("  Installed bins:   \(installRoot)")
 
     if autoApprove {
-        print("--yes keeps config and installed binaries; remove them interactively if needed.")
+        print("--yes keeps installed binaries; remove them interactively if needed.")
     }
 
     var plistResult = fm.fileExists(atPath: plistPath) ? "Kept" : "Missing"
-    var configResult = fm.fileExists(atPath: configPath) ? "Kept" : "Missing"
     var binariesResult = fm.fileExists(atPath: installRoot) ? "Kept" : "Missing"
 
     let removePlist = autoApprove ? true : confirm("Remove LaunchAgent plist? [y/N]")
-    let removeConfig = !autoApprove && confirm("Remove config file? [y/N]")
     let removeBinaries = !autoApprove && confirm("Remove installed binaries? [y/N]")
-    let shouldRemoveAnyFiles = removePlist || removeConfig || removeBinaries
+    let shouldRemoveAnyFiles = removePlist || removeBinaries
 
     if hasPlist && shouldRemoveAnyFiles && !dryRun {
         if runLaunchctl(args: ["bootout", "gui/\(uid)", plistPath], dryRun: false, context: "bootout") != 0 {
@@ -1402,27 +1226,6 @@ func runUninstall(autoApprove: Bool, dryRun: Bool) {
     }
 
     if autoApprove {
-        configResult = fm.fileExists(atPath: configPath) ? "Kept" : "Missing"
-    } else if removeConfig {
-        if fm.fileExists(atPath: configPath) {
-            do {
-                if dryRun {
-                    configResult = "Would remove"
-                } else {
-                    try fm.removeItem(atPath: configPath)
-                    configResult = "Removed"
-                }
-            } catch {
-                writeStderr("error: failed to remove config at \(configPath): \(error.localizedDescription)\n")
-                exit(1)
-            }
-        } else {
-            configResult = "Missing"
-            print("Missing: \(configPath)")
-        }
-    }
-
-    if autoApprove {
         binariesResult = fm.fileExists(atPath: installRoot) ? "Kept" : "Missing"
     } else if removeBinaries {
         if fm.fileExists(atPath: installRoot) {
@@ -1449,23 +1252,9 @@ func runUninstall(autoApprove: Bool, dryRun: Bool) {
     }
 
     print("LaunchAgent plist: \(plistResult)")
-    print("Config file:      \(configResult)")
     print("Installed bins:   \(binariesResult)")
     if dryRun {
         print("No launchctl commands were run.")
-    }
-}
-
-func loadConfig(path: String) throws -> Config {
-    let url = URL(fileURLWithPath: path)
-
-    do {
-        let data = try Data(contentsOf: url)
-        return try JSONDecoder().decode(Config.self, from: data)
-    } catch let error as DecodingError {
-        throw EnkaError.configDecodeFailed(path, error)
-    } catch {
-        throw EnkaError.configReadFailed(path, error)
     }
 }
 
@@ -1545,15 +1334,8 @@ func createEventTap(state: LauncherState) throws -> CFMachPort {
     return eventTap
 }
 
-func runDaemon(configPath: String) throws {
+func runDaemon() throws {
     let state = LauncherState()
-    if FileManager.default.fileExists(atPath: configPath) {
-        do {
-            state.config = try loadConfig(path: configPath)
-        } catch {
-            writeStderr("warning: could not load config at \(configPath): \(error.localizedDescription)\n")
-        }
-    }
 
     guard checkAccessibilityPermission() else {
         throw EnkaError.accessibilityPermissionRequired
@@ -1580,8 +1362,8 @@ do {
     let command = try parseArguments(arguments)
 
     switch command {
-    case let .run(configPath):
-        try runDaemon(configPath: configPath)
+    case .run:
+        try runDaemon()
     case let .accessibilityStatus(resultFile):
         let isGranted = checkAccessibilityPermission()
         if let resultFile {
@@ -1619,10 +1401,9 @@ do {
             writeStderr("error: failed to select input source '\(sourceId)'\n")
             exit(1)
         }
-    case let .setup(autoApprove, replaceExistingConfig, dryRun, noOpen, noStart, waitAccessibilitySeconds):
+    case let .setup(autoApprove, dryRun, noOpen, noStart, waitAccessibilitySeconds):
         runSetup(
             autoApprove: autoApprove,
-            replaceExistingConfig: replaceExistingConfig,
             dryRun: dryRun,
             noOpen: noOpen,
             noStart: noStart,
@@ -1631,9 +1412,9 @@ do {
     case let .uninstall(autoApprove, dryRun):
         runUninstall(autoApprove: autoApprove, dryRun: dryRun)
     case let .status(dryRun):
-        printStatus(configPath: defaultConfigPath(), dryRun: dryRun)
+        printStatus(dryRun: dryRun)
     case .doctor:
-        printDoctor(configPath: defaultConfigPath())
+        printDoctor()
     case let .restart(dryRun):
         let plist = launchAgentPlistPath()
         if !dryRun && !FileManager.default.fileExists(atPath: plist) {

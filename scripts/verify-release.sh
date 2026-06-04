@@ -140,7 +140,6 @@ echo "verify: dry-run execution"
 VERIFY_SETUP_DRY_RUN_LOG="$VERIFY_TMP_DIR/verify-setup-dry-run.log"
 if ! (
   ENKA_INSTALL_ROOT="$ENKA_VERIFY_INSTALL_ROOT" \
-  ENKA_CONFIG_DIR="$ENKA_VERIFY_INSTALL_ROOT/.verify-config" \
   ENKA_LAUNCH_AGENT_DIR="$ENKA_VERIFY_INSTALL_ROOT/.verify-agents" \
   "$ENKA_VERIFY_INSTALL_ROOT/bin/enka" setup --dry-run --yes --wait-accessibility 0
 ) >"$VERIFY_SETUP_DRY_RUN_LOG" 2>&1; then
@@ -149,14 +148,14 @@ if ! (
   exit 1
 fi
 
-if [ -e "$ENKA_VERIFY_INSTALL_ROOT/.verify-config/config.json" ] || [ -e "$ENKA_VERIFY_INSTALL_ROOT/.verify-agents/dev.ultrahope.enka.plist" ]; then
+if [ -e "$ENKA_VERIFY_INSTALL_ROOT/.verify-agents/dev.ultrahope.enka.plist" ]; then
   cat "$VERIFY_SETUP_DRY_RUN_LOG"
   echo "error: setup dry-run modified files unexpectedly" >&2
   exit 1
 fi
-if [ -d "$ENKA_VERIFY_INSTALL_ROOT/.verify-config" ] || [ -d "$ENKA_VERIFY_INSTALL_ROOT/.verify-agents" ]; then
+if [ -d "$ENKA_VERIFY_INSTALL_ROOT/.verify-agents" ]; then
   cat "$VERIFY_SETUP_DRY_RUN_LOG"
-  echo "error: setup dry-run created config or launch agent directories unexpectedly" >&2
+  echo "error: setup dry-run created launch agent directories unexpectedly" >&2
   exit 1
 fi
 if ! grep -Fq "No files will be written, no apps opened, no launchctl commands run." "$VERIFY_SETUP_DRY_RUN_LOG"; then
