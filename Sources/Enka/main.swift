@@ -279,43 +279,33 @@ func launchctlServiceTarget() -> String {
     "\(launchctlDomain())/\(launchctlLabel())"
 }
 
-func escapeXML(_ value: String) -> String {
-    value
-        .replacingOccurrences(of: "&", with: "&amp;")
-        .replacingOccurrences(of: "<", with: "&lt;")
-        .replacingOccurrences(of: ">", with: "&gt;")
-        .replacingOccurrences(of: "\"", with: "&quot;")
-        .replacingOccurrences(of: "'", with: "&apos;")
-}
-
 func launchAgentPlist() -> String {
     let programPath = installedAppExecutablePath()
     let logPath = standardOutputLogPath()
     let errPath = standardErrorLogPath()
 
-    return """
-    <?xml version="1.0" encoding="UTF-8"?>
-    <!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-    <plist version="1.0">
-    <dict>
-      <key>Label</key>
-      <string>\(escapeXML("dev.ultrahope.enka"))</string>
-      <key>ProgramArguments</key>
-      <array>
-        <string>\(escapeXML(programPath))</string>
-        <string>run</string>
-      </array>
-      <key>RunAtLoad</key>
-      <true/>
-      <key>KeepAlive</key>
-      <true/>
-      <key>StandardOutPath</key>
-      <string>\(escapeXML(logPath))</string>
-      <key>StandardErrorPath</key>
-      <string>\(escapeXML(errPath))</string>
-    </dict>
-    </plist>
-    """
+    let plist: [String: Any] = [
+        "Label": launchctlLabel(),
+        "ProgramArguments": [programPath, "run"],
+        "RunAtLoad": true,
+        "KeepAlive": true,
+        "StandardOutPath": logPath,
+        "StandardErrorPath": errPath,
+    ]
+
+    do {
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: plist,
+            format: .xml,
+            options: 0
+        )
+        guard let content = String(data: data, encoding: .utf8) else {
+            fatalError("failed to encode launch agent plist as UTF-8")
+        }
+        return content
+    } catch {
+        fatalError("failed to serialize launch agent plist: \(error.localizedDescription)")
+    }
 }
 
 struct InputSource {
